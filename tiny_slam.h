@@ -64,6 +64,7 @@ struct SensorData
 {
     std::uint32_t mTimeStamp;           /* データ取得時のタイムスタンプ (us) */
     int           mValue[SCAN_SIZE];    /* 距離値の集合 (mm) */
+    int           mDataNum;             /* 実際のデータの個数 */
     int           mOdometerCountLeft;   /* 左側の車輪のカウンタ */
     int           mOdometerCountRight;  /* 右側の車輪のカウンタ */
 };
@@ -223,6 +224,19 @@ void UpdateRobotPosition2D(
     int deltaTime,                  /* 時間経過 (us) */
     double* pRobotVelocityXY,       /* ロボットの並進速度 (m/s) */
     double* pRobotVelocityAngle);   /* ロボットの回転角速度 (m/s) */
+
+/*
+ * SLAMの状態の初期化
+ */
+void InitializeSlamContext(
+    SlamContext* pContext,      /* SLAMの状態 */
+    GridMap* pMap,              /* 占有格子地図 */
+    SensorInfo* pSensorInfo,    /* センサのパラメータ */
+    RobotInfo* pRobotInfo,      /* ロボットのパラメータ */
+    RobotPosition2D* pRobotPos, /* ロボットの姿勢 */
+    int holeWidth,              /* 穴のサイズ (格子の個数) */
+    double sigmaXY,             /* 並進移動の標準偏差 (m) */
+    double sigmaTheta);         /* 回転移動の標準偏差 (m) */
 
 /*
  * 逐次的な自己位置推定と地図構築

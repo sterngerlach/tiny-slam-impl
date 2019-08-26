@@ -3,6 +3,8 @@
 
 #include "tiny_slam.h"
 
+#include <iostream>
+
 /*
  * 2つのロボット位置間の距離を計算
  */
@@ -139,12 +141,12 @@ void MapLaserPoint(
         clippedHoleX += (clippedHoleX - mapBeginX) *
                         (-(clippedHoleY - (MAP_SIZE - 1))) /
                         (clippedHoleY - mapBeginY);
-        clippedHoleY = 0;
+        clippedHoleY = MAP_SIZE - 1;
     }
 
     int deltaX = std::abs(mapHoleX - mapBeginX);
     int deltaY = std::abs(mapHoleY - mapBeginY);
-    bool isSteep = deltaY > deltaX;
+    bool isSteep = deltaY >= deltaX;
 
     int clippedDeltaX = std::abs(clippedHoleX - mapBeginX);
     int clippedDeltaY = std::abs(clippedHoleY - mapBeginY);
@@ -167,11 +169,16 @@ void MapLaserPoint(
      * 直線の傾きが1以上かどうかによって使用する変数を適切に変える */
     int halfHoleWidth = (!isSteep) ? std::abs(mapEndX - mapHoleX) :
                                      std::abs(mapEndY - mapHoleY);
+
+    if (halfHoleWidth == 0) {
+        std::cerr << "Warning: Half the hole width is 0" << '\n';
+        return;
+    }
     
     /* Bresenhamの方法における格子の値の誤差 */
     int errValue = halfHoleWidth / 2;
     /* Bresenhamの方法におけるy座標の値の誤差 */
-    int errY = clippedDeltaX;
+    int errY = -clippedDeltaX;
 
     /* 1つ格子がずれたときの格子の値の変化 */
     int stepValue = (cellValue - CELL_NO_OBSTACLE) / halfHoleWidth;
@@ -191,9 +198,10 @@ void MapLaserPoint(
     
     /* 格子の現在の値 */
     int currentValue = CELL_NO_OBSTACLE;
+
     /* 格子のインデックス */
-    int cellX = mapBeginX;
-    int cellY = mapBeginY;
+    int cellX = (!isSteep) ? mapBeginX : mapBeginY;
+    int cellY = (!isSteep) ? mapBeginY : mapBeginX;
 
     for (int x = 0; x <= clippedDeltaX; ++x, cellX += stepX) {
         /* 穴(Hole)の内側にいる場合 */
@@ -220,15 +228,24 @@ void MapLaserPoint(
         }
 
         /* 格子の値を線形補間で更新 */
-        int oldValue = pMap->mCells[cellY * MAP_SIZE + cellX];
-        int newValue = ((256 - alpha) * oldValue + alpha * currentValue) >> 8;
-        pMap->mCells[cellY * MAP_SIZE + cellX] = newValue;
+        /* isSteepがtrueであれば, cellXがy座標,
+         * cellYがx座標を指すように入れ替えられている
+         * 元の実装のようにポインタを使用すれば簡略化できる */
+        if (!isSteep) {
+            int oldValue = pMap->mCells[cellY * MAP_SIZE + cellX];
+            int newValue = ((256 - alpha) * oldValue + alpha * currentValue) >> 8;
+            pMap->mCells[cellY * MAP_SIZE + cellX] = newValue;
+        } else {
+            int oldValue = pMap->mCells[cellX * MAP_SIZE + cellY];
+            int newValue = ((256 - alpha) * oldValue + alpha * currentValue) >> 8;
+            pMap->mCells[cellX * MAP_SIZE + cellY] = newValue;
+        }
         
-        errY -= 2 * clippedDeltaY;
+        errY += 2 * clippedDeltaY;
 
-        if (errY < 0) {
+        if (errY > 0) {
             cellY += stepY;
-            errY += 2 * clippedDeltaX;
+            errY -= 2 * clippedDeltaX;
         }
     }
 }
@@ -422,20 +439,22 @@ void BuildScanFromSensorData(
     for (int i = scanDetectionMargin;
          i < scanSize - scanDetectionMargin; ++i) {
         /* 各センサデータの距離 (mm) */
-        int sensorValue = pSensorData->mValue[i];
+        int sensorValueInMm = pSensorData->mValue[i];
+        /* 各センサデータの距離 (mm) */
+        double sensorValueInM = static_cast<double>(sensorValueInMm) / 1e3;
 
-        if (sensorValue == 0) {
+        if (sensorValueInMm == 0) {
             /* 障害物がない場合(距離が大きいため0にされている場合) */
             AppendScanFromSensorData(pScan, scanSpan, scanSize, i,
                                      scanAngleMin, scanAngleMax,
                                      horizontalShift, rotationShift,
                                      scanDistNoDetection, CELL_NO_OBSTACLE);
-        } else if (sensorValue > holeWidth / 2.0) {
+        } else if (sensorValueInM > holeWidth / 2.0) {
             /* 障害物である場合 */
             AppendScanFromSensorData(pScan, scanSpan, scanSize, i,
                                      scanAngleMin, scanAngleMax,
                                      horizontalShift, rotationShift,
-                                     sensorValue, CELL_OBSTACLE);
+                                     sensorValueInM, CELL_OBSTACLE);
         }
     }
 }
@@ -501,7 +520,7 @@ void UpdateRobotPosition2D(
     int odometerCountRight,         /* オドメータ値 (右側の車輪) */
     int deltaTime,                  /* 時間経過 (us) */
     double* pRobotVelocityXY,       /* ロボットの並進速度 (m/s) */
-    double* pRobotVelocityAngle)    /* ロボットの回転角速度 (m/s) */
+    double* pRobotVelocityAngle)    /* ロボットの回転角速度 (rad/s) */
 {
     /* odometerRatioは, 左右の車輪におけるオドメータ値の
      * 重み付けを行う(通常は1.0に設定される) */
@@ -532,13 +551,41 @@ void UpdateRobotPosition2D(
 
     pPos->mX += deltaXY * std::cos(thetaRad);
     pPos->mY += deltaXY * std::sin(thetaRad);
-    pPos->mTheta += deltaAngle;
+    pPos->mTheta += RAD_TO_DEG(deltaAngle);
 
     if (pRobotVelocityXY != nullptr)
         *pRobotVelocityXY = robotVelocityXY;
 
     if (pRobotVelocityAngle != nullptr)
         *pRobotVelocityAngle = robotVelocityAngle;
+}
+
+/*
+ * SLAMの状態の初期化
+ */
+void InitializeSlamContext(
+    SlamContext* pContext,      /* SLAMの状態 */
+    GridMap* pMap,              /* 占有格子地図 */
+    SensorInfo* pSensorInfo,    /* センサのパラメータ */
+    RobotInfo* pRobotInfo,      /* ロボットのパラメータ */
+    RobotPosition2D* pRobotPos, /* ロボットの姿勢 */
+    int holeWidth,              /* 穴のサイズ (格子の個数) */
+    double sigmaXY,             /* 並進移動の標準偏差 (m) */
+    double sigmaTheta)          /* 回転移動の標準偏差 (m) */
+{
+    pContext->mpMap = pMap;
+    pContext->mSensorInfo = *pSensorInfo;
+    pContext->mRobotInfo = *pRobotInfo;
+    pContext->mLastRobotPos = *pRobotPos;
+    pContext->mLastOdometerCountLeft = 0;
+    pContext->mLastOdometerCountRight = 0;
+    pContext->mLastTimeStamp = 0;
+    pContext->mLastRobotVelocityXY = 0.0;
+    pContext->mLastRobotVelocityAngle = 0.0;
+    pContext->mAccumulatedTravelDist = 0.0;
+    pContext->mHoleWidth = holeWidth;
+    pContext->mSigmaXY = 0.0;
+    pContext->mSigmaTheta = 0.0;
 }
 
 /*
