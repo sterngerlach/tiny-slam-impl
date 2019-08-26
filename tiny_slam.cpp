@@ -337,7 +337,8 @@ RobotPosition2D MonteCarloPositionSearch(
     const RobotPosition2D* pStartPos,       /* 探索開始点の座標 */
     double sigmaXY,                         /* 並進移動の標準偏差 */
     double sigmaTheta,                      /* 回転移動の標準偏差 */
-    int maxIterNum)                         /* 最大の繰り返し数 */
+    int maxIterNum,                         /* 最大の繰り返し数 */
+    int* pBestDist)                         /* スキャンと現在位置との最小の相違 */
 {
     RobotPosition2D currentPos = *pStartPos;
     RobotPosition2D bestPos = *pStartPos;
@@ -398,6 +399,9 @@ RobotPosition2D MonteCarloPositionSearch(
             }
         }
     }
+
+    if (pBestDist != nullptr)
+        *pBestDist = bestDist;
 
     return bestPos;
 }
@@ -571,7 +575,7 @@ void InitializeSlamContext(
     const RobotPosition2D* pRobotPos,   /* ロボットの姿勢 */
     int holeWidth,                      /* 穴のサイズ (格子の個数) */
     double sigmaXY,                     /* 並進移動の標準偏差 (m) */
-    double sigmaTheta)                  /* 回転移動の標準偏差 (m) */
+    double sigmaTheta)                  /* 回転移動の標準偏差 (deg) */
 {
     pContext->mpMap = pMap;
     pContext->mSensorInfo = *pSensorInfo;
@@ -584,8 +588,8 @@ void InitializeSlamContext(
     pContext->mLastRobotVelocityAngle = 0.0;
     pContext->mAccumulatedTravelDist = 0.0;
     pContext->mHoleWidth = holeWidth;
-    pContext->mSigmaXY = 0.0;
-    pContext->mSigmaTheta = 0.0;
+    pContext->mSigmaXY = sigmaXY;
+    pContext->mSigmaTheta = sigmaTheta;
 }
 
 /*
@@ -655,7 +659,8 @@ void IterativeMapBuilding(
                                           &currentPos,
                                           pContext->mSigmaXY,
                                           pContext->mSigmaTheta,
-                                          1000);
+                                          1000,
+                                          nullptr);
 
     /* センサ位置をロボット位置に戻す */
     thetaRad = DEG_TO_RAD(currentPos.mTheta);
@@ -694,9 +699,57 @@ void IterativeMapBuilding(
 /*
  * ループ閉じ込みによるロボットの姿勢調整
  */
-void LoopClosurePosition()
+RobotPosition2D LoopClosurePosition(
+    std::default_random_engine& randEngine, /* 擬似乱数生成器 */
+    const SensorData* pSensorData,          /* センサデータ */
+    const GridMap* pMap,                    /* 占有格子地図 */
+    const RobotPosition2D* pStartPos,       /* 探索開始点 */
+    double scanFrequency,                   /* 1秒間のスキャン回数 (Hz) */
+    int scanDetectionMargin,                /* 除去される両端のデータ数 */
+    int scanSize,                           /* センサデータの個数 */
+    double scanAngleMin,                    /* 角度の最小値 (deg) */
+    double scanAngleMax,                    /* 角度の最大値 (deg) */
+    double scanDistNoDetection,             /* 障害物がないと判定する距離 (m) */
+    double holeWidth,                       /* 穴のサイズ (格子の個数) */
+    double robotVelocityXY,                 /* ロボットの並進速度 (m/s) */
+    double robotVelocityAngle)              /* ロボットの回転速度 (rad/s) */
 {
-    /* TODO */
+    ScanData scanData;
+    RobotPosition2D resultPos;
+    int bestDistScanAndMap;
+
+    /* ロボットの姿勢がpStartPosにあり,
+     * そのときのセンサデータがpSensorDataであるとき,
+     * 誤差がそれ程累積されていない以前の地図pMapと,
+     * pSensorDataから生成したスキャンデータscanDataを
+     * マッチングすることによって, pMapが取得されたときから
+     * 現在に至るまで蓄積された誤差を軽減させられる */
+    
+    /* センサデータからスキャンデータを生成 */
+    BuildScanFromSensorData(&scanData,
+                            pSensorData,
+                            scanFrequency,
+                            scanDetectionMargin,
+                            scanSize,
+                            1,
+                            scanAngleMin,
+                            scanAngleMax,
+                            scanDistNoDetection,
+                            holeWidth,
+                            robotVelocityXY,
+                            robotVelocityAngle);
+
+    /* モンテカルロ探索により姿勢を調整 */
+    resultPos = MonteCarloPositionSearch(randEngine,
+                                         &scanData,
+                                         pMap,
+                                         pStartPos,
+                                         0.6,
+                                         20.0,
+                                         1e5,
+                                         &bestDistScanAndMap);
+
+    return resultPos;
 }
 
 /*
@@ -704,6 +757,5 @@ void LoopClosurePosition()
  */
 void LoopClosureTrajectory()
 {
-    /* TODO */
 }
 

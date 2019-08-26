@@ -246,5 +246,23 @@ void IterativeMapBuilding(
     const SensorData* pSensorData,          /* センサデータ */
     SlamContext* pContext);                 /* SLAMの状態 */
 
+/*
+ * ループ閉じ込みによるロボットの姿勢調整
+ */
+RobotPosition2D LoopClosurePosition(
+    std::default_random_engine& randEngine, /* 擬似乱数生成器 */
+    const SensorData* pSensorData,          /* センサデータ */
+    const GridMap* pMap,                    /* 占有格子地図 */
+    const RobotPosition2D* pStartPos,       /* 探索開始点 */
+    double scanFrequency,                   /* 1秒間のスキャン回数 (Hz) */
+    int scanDetectionMargin,                /* 除去される両端のデータ数 */
+    int scanSize,                           /* センサデータの個数 */
+    double scanAngleMin,                    /* 角度の最小値 (deg) */
+    double scanAngleMax,                    /* 角度の最大値 (deg) */
+    double scanDistNoDetection,             /* 障害物がないと判定する距離 (m) */
+    double holeWidth,                       /* 穴のサイズ (格子の個数) */
+    double robotVelocityXY,                 /* ロボットの並進速度 (m/s) */
+    double robotVelocityAngle);             /* ロボットの回転速度 (rad/s) */
+
 #endif /* TINY_SLAM_H */
 
