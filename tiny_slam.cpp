@@ -547,32 +547,7 @@ void UpdateRobotPosition2D(
 void IterativeMapBuilding(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
     SensorData* pSensorData,                /* センサデータ */
-    GridMap* pMap,                          /* 占有格子地図 */
-    RobotPosition2D* pPos,                  /* ロボットの姿勢 */
-    double wheelRadius,                     /* 車輪の半径 (m) */
-    double robotRadius,                     /* 車輪間の距離の半分 (m) */
-    int odometerCountPerTurn,               /* 1回転後のオドメータ値の増分 */
-    double odometerRatio,                   /* オドメータの重み付け値 */
-    int lastOdometerCountLeft,              /* 以前のオドメータ値 (左側の車輪) */
-    int lastOdometerCountRight,             /* 以前のオドメータ値 (右側の車輪) */
-    int deltaTime,                          /* 時間経過 (us) */
-    double scanFrequency,                   /* 1秒間のスキャン回数 (Hz) */
-    int scanDetectionMargin,                /* 取り除く両端のデータ数 */
-    int scanSize,                           /* センサデータの個数 */
-    double scanAngleMin,                    /* 角度の最小値 (deg) */
-    double scanAngleMax,                    /* 角度の最大値 (deg) */
-    double scanDistNoDetection,             /* 障害物の未検知の距離 (m) */
-    double holeWidth,                       /* 穴のサイズ (格子の個数) */
-    double sigmaXY,                         /* 並進移動の標準偏差 (m) */
-    double sigmaTheta,                      /* 回転移動の標準偏差 (m) */
-    double sensorOffsetX,                   /* ロボット中心に対するセンサの相対位置 */
-    double sensorOffsetY,                   /* ロボット中心に対するセンサの相対位置 */
-    double accumulatedTravelDist,           /* 累積走行距離 (m) */
-    double lastRobotVelocityXY,             /* 以前のロボットの並進速度 */
-    double lastRobotVelocityAngle,          /* 以前のロボットの回転速度 */
-    double* pRobotVelocityXY,               /* ロボットの並進速度 */
-    double* pRobotVelocityAngle,            /* ロボットの回転速度 */
-    int timeStep)                           /* 時間ステップ */
+    SlamContext* pContext)                  /* SLAMの状態 */
 {
     double robotVelocityXY;
     double robotVelocityAngle;
@@ -581,67 +556,91 @@ void IterativeMapBuilding(
     double sinTheta;
 
     ScanData currentScan;
-    RobotPosition2D currentPos = *pPos;
+    RobotPosition2D currentPos = pContext->mLastRobotPos;
 
-    if (timeStep > 0) {
+    if (pContext->mLastTimeStamp > 0) {
         /* ロボットの位置をオドメトリにより更新 */
-        UpdateRobotPosition2D(&currentPos, wheelRadius, robotRadius,
-                              odometerCountPerTurn, odometerRatio,
-                              lastOdometerCountLeft, lastOdometerCountRight,
+        UpdateRobotPosition2D(&currentPos,
+                              pContext->mRobotInfo.mWheelRadius,
+                              pContext->mRobotInfo.mRobotRadius,
+                              pContext->mRobotInfo.mOdometerCountPerTurn,
+                              pContext->mRobotInfo.mOdometerRatio,
+                              pContext->mLastOdometerCountLeft,
+                              pContext->mLastOdometerCountRight,
                               pSensorData->mOdometerCountLeft,
                               pSensorData->mOdometerCountRight,
-                              deltaTime,
-                              &robotVelocityXY, &robotVelocityAngle);
+                              pSensorData->mTimeStamp - pContext->mLastTimeStamp,
+                              &robotVelocityXY,
+                              &robotVelocityAngle);
     } else {
         robotVelocityXY = 0.0;
         robotVelocityAngle = 0.0;
     }
 
     /* センサデータからスキャンを構築 */
-    BuildScanFromSensorData(&currentScan, pSensorData,
-                            scanFrequency, scanDetectionMargin,
-                            scanSize, 3,
-                            scanAngleMin, scanAngleMax,
-                            scanDistNoDetection, holeWidth,
-                            lastRobotVelocityXY, lastRobotVelocityAngle);
+    BuildScanFromSensorData(&currentScan,
+                            pSensorData,
+                            pContext->mSensorInfo.mFrequency,
+                            pContext->mSensorInfo.mDetectionMargin,
+                            pContext->mSensorInfo.mScanSize,
+                            3,
+                            pContext->mSensorInfo.mAngleMin,
+                            pContext->mSensorInfo.mAngleMax,
+                            pContext->mSensorInfo.mDistNoDetection,
+                            pContext->mHoleWidth,
+                            pContext->mLastRobotVelocityXY,
+                            pContext->mLastRobotVelocityAngle);
 
     /* モンテカルロ探索による自己位置推定 */
-
     thetaRad = DEG_TO_RAD(currentPos.mTheta);
     cosTheta = std::cos(thetaRad);
     sinTheta = std::sin(thetaRad);
 
     /* ロボット位置をセンサ位置に変換 */
-    currentPos.mX += sensorOffsetX * cosTheta - sensorOffsetY * sinTheta;
-    currentPos.mY += sensorOffsetX * sinTheta + sensorOffsetY * cosTheta;
+    currentPos.mX += pContext->mSensorInfo.mOffsetPosX * cosTheta -
+                     pContext->mSensorInfo.mOffsetPosY * sinTheta;
+    currentPos.mY += pContext->mSensorInfo.mOffsetPosX * sinTheta +
+                     pContext->mSensorInfo.mOffsetPosY * cosTheta;
 
     currentPos = MonteCarloPositionSearch(randEngine,
-                                          &currentScan, pMap,
+                                          &currentScan,
+                                          pContext->mpMap,
                                           &currentPos,
-                                          sigmaXY, sigmaTheta,
+                                          pContext->mSigmaXY,
+                                          pContext->mSigmaTheta,
                                           1000);
 
+    /* センサ位置をロボット位置に戻す */
     thetaRad = DEG_TO_RAD(currentPos.mTheta);
     cosTheta = std::cos(thetaRad);
     sinTheta = std::sin(thetaRad);
 
-    /* センサ位置をロボット位置に戻す */
-    currentPos.mX -= (sensorOffsetX * cosTheta - sensorOffsetY * sinTheta);
-    currentPos.mY -= (sensorOffsetX * sinTheta + sensorOffsetY * cosTheta);
+    currentPos.mX -= pContext->mSensorInfo.mOffsetPosX * cosTheta -
+                     pContext->mSensorInfo.mOffsetPosY * sinTheta;
+    currentPos.mY -= pContext->mSensorInfo.mOffsetPosX * sinTheta +
+                     pContext->mSensorInfo.mOffsetPosY * cosTheta;
 
     /* 累積走行距離の計算 */
     double travelDist = std::sqrt(
-        (currentPos.mX - pPos->mX) * (currentPos.mX - pPos->mX) +
-        (currentPos.mY - pPos->mY) * (currentPos.mY - pPos->mY));
-    accumulatedTravelDist += travelDist;
+        (currentPos.mX - pContext->mLastRobotPos.mX) *
+        (currentPos.mX - pContext->mLastRobotPos.mX) +
+        (currentPos.mY - pContext->mLastRobotPos.mY) *
+        (currentPos.mY - pContext->mLastRobotPos.mY));
+    pContext->mAccumulatedTravelDist += travelDist;
 
     /* 地図の更新 */
-    UpdateMap(&currentScan, pMap, &currentPos, 50, holeWidth);
-
-    if (pRobotVelocityXY != nullptr)
-        *pRobotVelocityXY = robotVelocityXY;
-
-    if (pRobotVelocityAngle != nullptr)
-        *pRobotVelocityAngle = robotVelocityAngle;
+    UpdateMap(&currentScan,
+              pContext->mpMap,
+              &currentPos,
+              50,
+              pContext->mHoleWidth);
+    
+    /* ロボットの状態の更新 */
+    pContext->mLastRobotPos = currentPos;
+    pContext->mLastOdometerCountLeft = pSensorData->mOdometerCountLeft;
+    pContext->mLastOdometerCountRight = pSensorData->mOdometerCountRight;
+    pContext->mLastTimeStamp = pSensorData->mTimeStamp;
+    pContext->mLastRobotVelocityXY = robotVelocityXY;
+    pContext->mLastRobotVelocityAngle = robotVelocityAngle;
 }
 

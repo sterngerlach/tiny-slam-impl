@@ -79,6 +79,52 @@ struct RobotPosition2D
 };
 
 /*
+ * センサのパラメータ
+ */
+struct SensorInfo
+{
+    double mOffsetPosX;         /* ロボット中心に対するセンサの相対位置 */
+    double mOffsetPosY;         /* ロボット中心に対するセンサの相対位置 */
+    int    mScanSize;           /* センサデータの個数 */
+    double mAngleMin;           /* 角度の最小値 (deg) */
+    double mAngleMax;           /* 角度の最大値 (deg) */
+    int    mDetectionMargin;    /* 取り除く両端のセンサデータの個数 */
+    double mDistNoDetection;    /* 障害物を検知しない距離 (m) */
+    double mFrequency;          /* 1秒間のスキャン回数 (Hz) */
+};
+
+/*
+ * ロボットのパラメータ
+ */
+struct RobotInfo
+{
+    double mWheelRadius;            /* 車輪の半径 (m) */
+    double mRobotRadius;            /* 車輪間の距離の半分 (m) */
+    int    mOdometerCountPerTurn;   /* 1回転後のオドメータ値の増分 */
+    double mOdometerRatio;          /* オドメータの重み付け値 */
+};
+
+/*
+ * SLAMの状態
+ */
+struct SlamContext
+{
+    GridMap*        mpMap;                      /* 占有格子地図 */
+    SensorInfo      mSensorInfo;                /* センサのパラメータ */
+    RobotInfo       mRobotInfo;                 /* ロボットのパラメータ */
+    RobotPosition2D mLastRobotPos;              /* ロボットの姿勢 */
+    int             mLastOdometerCountLeft;     /* 以前のオドメータ値 (左側の車輪) */
+    int             mLastOdometerCountRight;    /* 以前のオドメータ値 (右側の車輪) */
+    std::uint32_t   mLastTimeStamp;             /* タイムスタンプ (us) */
+    double          mLastRobotVelocityXY;       /* 以前のロボットの並進速度 (m/s) */
+    double          mLastRobotVelocityAngle;    /* 以前のロボットの回転速度 (rad/s) */
+    double          mAccumulatedTravelDist;     /* 累積走行距離 (m) */
+    int             mHoleWidth;                 /* 穴のサイズ (格子の個数) */
+    double          mSigmaXY;                   /* 並進移動の標準偏差 (m) */
+    double          mSigmaTheta;                /* 回転移動の標準偏差 (m) */
+};
+
+/*
  * 2つのロボット位置間の距離を計算
  */
 double DistanceRobotPosition2D(RobotPosition2D* pPos0,
@@ -184,32 +230,7 @@ void UpdateRobotPosition2D(
 void IterativeMapBuilding(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
     SensorData* pSensorData,                /* センサデータ */
-    GridMap* pMap,                          /* 占有格子地図 */
-    RobotPosition2D* pPos,                  /* ロボットの姿勢 */
-    double wheelRadius,                     /* 車輪の半径 (m) */
-    double robotRadius,                     /* 車輪間の距離の半分 (m) */
-    int odometerCountPerTurn,               /* 1回転後のオドメータ値の増分 */
-    double odometerRatio,                   /* オドメータの重み付け値 */
-    int lastOdometerCountLeft,              /* 以前のオドメータ値 (左側の車輪) */
-    int lastOdometerCountRight,             /* 以前のオドメータ値 (右側の車輪) */
-    int deltaTime,                          /* 時間経過 (us) */
-    double scanFrequency,                   /* 1秒間のスキャン回数 (Hz) */
-    int scanDetectionMargin,                /* 取り除く両端のデータ数 */
-    int scanSize,                           /* センサデータの個数 */
-    double scanAngleMin,                    /* 角度の最小値 (deg) */
-    double scanAngleMax,                    /* 角度の最大値 (deg) */
-    double scanDistNoDetection,             /* 障害物の未検知の距離 (m) */
-    double holeWidth,                       /* 穴のサイズ (格子の個数) */
-    double sigmaXY,                         /* 並進移動の標準偏差 (m) */
-    double sigmaTheta,                      /* 回転移動の標準偏差 (m) */
-    double sensorOffsetX,                   /* ロボット中心に対するセンサの相対位置 */
-    double sensorOffsetY,                   /* ロボット中心に対するセンサの相対位置 */
-    double accumulatedTravelDist,           /* 累積走行距離 (m) */
-    double lastRobotVelocityXY,             /* 以前のロボットの並進速度 */
-    double lastRobotVelocityAngle,          /* 以前のロボットの回転速度 */
-    double* pRobotVelocityXY,               /* ロボットの並進速度 */
-    double* pRobotVelocityAngle,            /* ロボットの回転速度 */
-    int timeStep);                          /* 時間ステップ */
+    SlamContext* pContext);                 /* SLAMの状態 */
 
 #endif /* TINY_SLAM_H */
 
