@@ -128,8 +128,8 @@ struct SlamContext
 /*
  * 2つのロボット位置間の距離を計算
  */
-double DistanceRobotPosition2D(RobotPosition2D* pPos0,
-                               RobotPosition2D* pPos1);
+double DistanceRobotPosition2D(const RobotPosition2D* pPos0,
+                               const RobotPosition2D* pPos1);
 
 /*
  * 占有格子地図の初期化
@@ -169,9 +169,9 @@ void UpdateMap(
  */
 RobotPosition2D MonteCarloPositionSearch(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
-    ScanData* pScan,                        /* スキャンデータ */
-    GridMap* pMap,                          /* 占有格子地図 */
-    RobotPosition2D* pStartPos,             /* 探索開始点の座標 */
+    const ScanData* pScan,                  /* スキャンデータ */
+    const GridMap* pMap,                    /* 占有格子地図 */
+    const RobotPosition2D* pStartPos,       /* 探索開始点の座標 */
     double sigmaXY,                         /* 並進移動の標準偏差 */
     double sigmaTheta,                      /* 回転移動の標準偏差 */
     int maxIterNum);                        /* 最大の繰り返し数 */
@@ -229,21 +229,21 @@ void UpdateRobotPosition2D(
  * SLAMの状態の初期化
  */
 void InitializeSlamContext(
-    SlamContext* pContext,      /* SLAMの状態 */
-    GridMap* pMap,              /* 占有格子地図 */
-    SensorInfo* pSensorInfo,    /* センサのパラメータ */
-    RobotInfo* pRobotInfo,      /* ロボットのパラメータ */
-    RobotPosition2D* pRobotPos, /* ロボットの姿勢 */
-    int holeWidth,              /* 穴のサイズ (格子の個数) */
-    double sigmaXY,             /* 並進移動の標準偏差 (m) */
-    double sigmaTheta);         /* 回転移動の標準偏差 (m) */
+    SlamContext* pContext,              /* SLAMの状態 */
+    GridMap* pMap,                      /* 占有格子地図 */
+    const SensorInfo* pSensorInfo,      /* センサのパラメータ */
+    const RobotInfo* pRobotInfo,        /* ロボットのパラメータ */
+    const RobotPosition2D* pRobotPos,   /* ロボットの姿勢 */
+    int holeWidth,                      /* 穴のサイズ (格子の個数) */
+    double sigmaXY,                     /* 並進移動の標準偏差 (m) */
+    double sigmaTheta);                 /* 回転移動の標準偏差 (m) */
 
 /*
  * 逐次的な自己位置推定と地図構築
  */
 void IterativeMapBuilding(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
-    SensorData* pSensorData,                /* センサデータ */
+    const SensorData* pSensorData,          /* センサデータ */
     SlamContext* pContext);                 /* SLAMの状態 */
 
 #endif /* TINY_SLAM_H */
