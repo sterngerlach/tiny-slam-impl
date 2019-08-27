@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "tiny_slam.h"
+#include "util.h"
 
 const size_t MaxSensorDataSize = 5000;
 const int ScanSize = 682;
@@ -92,12 +93,16 @@ int main(int argc, char** argv)
     std::default_random_engine randEngine { seedGen() };
     
     /* オドメトリとスキャンデータを格納するファイル名 */
-    const char* fileName = argv[1];
+    std::string fileName = argv[1];
+    size_t lastPeriodIndex = fileName.find_last_of('.');
+    std::string dataName =
+        (lastPeriodIndex == std::string::npos) ?
+        fileName : fileName.substr(0, lastPeriodIndex);
 
     /* センサデータの読み込み */
     std::vector<SensorData> sensorData;
 
-    if (!ReadSensorData(fileName, sensorData)) {
+    if (!ReadSensorData(fileName.c_str(), sensorData)) {
         std::cerr << "Failed to load file \'" << fileName << "\'\n";
         return EXIT_FAILURE;
     }
@@ -129,6 +134,9 @@ int main(int argc, char** argv)
     /* 地図の初期化 */
     GridMap* pResultMap = new GridMap();
     InitializeGridMap(pResultMap);
+
+    GridMap* pTrajectoryMap = new GridMap();
+    InitializeGridMap(pTrajectoryMap);
     
     /* TinySLAMの実行 */
     SlamContext slamContext;
@@ -145,10 +153,10 @@ int main(int argc, char** argv)
         /* SLAMの状態の初期化 */
         InitializeSlamContext(&slamContext,
                               pResultMap, &sensorInfo, &robotInfo, &startPos, 
-                              6.0, 0.1, 20.0);
+                              0.6, 0.1, 20.0);
 
         /* 各センサデータごとの処理を開始 */
-        for (scanIndex = loopStart; scanIndex < sensorData.size(); ++scanIndex) {
+        for (scanIndex = loopStart; scanIndex < 350; ++scanIndex) {
             /* センサデータを基に地図を構築 */
             IterativeMapBuilding(randEngine, &sensorData[scanIndex], &slamContext);
 
@@ -157,6 +165,16 @@ int main(int argc, char** argv)
                       << "Robot position x: " << slamContext.mLastRobotPos.mX << ", "
                       << "y: " << slamContext.mLastRobotPos.mY << ", "
                       << "theta: " << slamContext.mLastRobotPos.mTheta << '\n';
+            
+            /* ロボットの軌跡を記録 */
+            int mapX = static_cast<int>(std::floor(
+                slamContext.mLastRobotPos.mX * CELLS_PER_METER + 0.5));
+            int mapY = static_cast<int>(std::floor(
+                slamContext.mLastRobotPos.mY * CELLS_PER_METER + 0.5));
+
+            if (mapX >= 0 && mapX < MAP_SIZE &&
+                mapY >= 0 && mapY < MAP_SIZE)
+                pTrajectoryMap->mCells[mapY * MAP_SIZE + mapX] = 0;
         }
 
         std::cerr << "Accumulated travel distance: "
@@ -167,9 +185,22 @@ int main(int argc, char** argv)
         std::cerr << "End position x: " << slamContext.mLastRobotPos.mX << ", "
                   << "y: " << slamContext.mLastRobotPos.mY << ", "
                   << "theta: " << slamContext.mLastRobotPos.mTheta << '\n';
+
+        /* 地図を画像として保存 */
+        std::string forwardFileName = dataName;
+        forwardFileName += "-loop";
+        forwardFileName += std::to_string(loopCount);
+        forwardFileName += "-forward.pgm";
+
+        SaveMapImagePgm(pResultMap, pTrajectoryMap,
+                        forwardFileName.c_str(),
+                        MAP_SIZE, MAP_SIZE, MAP_SIZE, MAP_SIZE);
     }
     
     /* 地図の破棄 */
+    delete pTrajectoryMap;
+    pTrajectoryMap = nullptr;
+
     delete pResultMap;
     pResultMap = nullptr;
 
