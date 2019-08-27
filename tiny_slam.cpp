@@ -46,8 +46,8 @@ int DistanceScanToMap(const ScanData* pScan,        /* スキャンデータ */
     int pointsNum = 0;
     
     /* ロボットの座標(地図座標系) */
-    int posX = pPos->mX;
-    int posY = pPos->mY;
+    double posX = pPos->mX;
+    double posY = pPos->mY;
     
     /* ロボットの回転角(rad) */
     double cosTheta = std::cos(DEG_TO_RAD(pPos->mTheta));
@@ -209,20 +209,20 @@ void MapLaserPoint(
             if (x <= deltaX - halfHoleWidth) {
                 /* 穴(Hole)の左側にいる場合 */
                 currentValue += stepValue;
-                errValue -= deltaValue;
+                errValue += deltaValue;
 
-                if (errValue < 0) {
+                if (errValue > halfHoleWidth) {
                     currentValue += stepValueX;
-                    errValue += halfHoleWidth;
+                    errValue -= halfHoleWidth;
                 }
             } else {
                 /* 穴(Hole)の右側にいる場合 */
                 currentValue -= stepValue;
-                errValue += deltaValue;
+                errValue -= deltaValue;
 
-                if (errValue > halfHoleWidth) {
+                if (errValue < 0) {
                     currentValue -= stepValueX;
-                    errValue -= halfHoleWidth;
+                    errValue += halfHoleWidth;
                 }
             }
         }
@@ -231,16 +231,13 @@ void MapLaserPoint(
         /* isSteepがtrueであれば, cellXがy座標,
          * cellYがx座標を指すように入れ替えられている
          * 元の実装のようにポインタを使用すれば簡略化できる */
-        if (!isSteep) {
-            int oldValue = pMap->mCells[cellY * MAP_SIZE + cellX];
-            int newValue = ((256 - alpha) * oldValue + alpha * currentValue) >> 8;
-            pMap->mCells[cellY * MAP_SIZE + cellX] = newValue;
-        } else {
-            int oldValue = pMap->mCells[cellX * MAP_SIZE + cellY];
-            int newValue = ((256 - alpha) * oldValue + alpha * currentValue) >> 8;
-            pMap->mCells[cellX * MAP_SIZE + cellY] = newValue;
-        }
-        
+        std::size_t cellIndex = (!isSteep) ? (cellY * MAP_SIZE + cellX) :
+                                             (cellX * MAP_SIZE + cellY);
+        std::uint16_t oldValue = pMap->mCells[cellIndex];
+        std::uint16_t newValue =
+            ((256 - alpha) * oldValue + alpha * currentValue) >> 8;
+        pMap->mCells[cellIndex] = newValue;
+
         errY += 2 * clippedDeltaY;
 
         if (errY > 0) {
@@ -258,13 +255,13 @@ void UpdateMap(
     GridMap* pMap,                  /* 占有格子地図 */
     const RobotPosition2D* pPos,    /* ロボットの姿勢 */
     int integrationQuality,         /* 混合率 */
-    int holeWidth)                  /* 穴のサイズ (格子の個数) */
+    double holeWidth)               /* 穴のサイズ (m) */
 {
     /* 地図の更新 */
     
     /* ロボットの座標(地図座標系) */
-    int posX = pPos->mX;
-    int posY = pPos->mY;
+    double posX = pPos->mX;
+    double posY = pPos->mY;
 
     /* ロボットの回転角(rad) */
     double cosTheta = std::cos(DEG_TO_RAD(pPos->mTheta));
@@ -275,6 +272,9 @@ void UpdateMap(
         std::floor(pPos->mX * CELLS_PER_METER + 0.5));
     int mapBeginY = static_cast<int>(
         std::floor(pPos->mY * CELLS_PER_METER + 0.5));
+    
+    /* 混合度合 */
+    int quality;
 
     for (int i = 0; i < pScan->mPointsNum; ++i) {
         /* スキャン点の座標(ロボット座標系) */
@@ -314,7 +314,9 @@ void UpdateMap(
 
         /* スキャン点に障害物がないときは, 混合率を減らす */
         if (pScan->mPoints[i].mValue == CELL_NO_OBSTACLE)
-            integrationQuality /= 4;
+            quality = integrationQuality / 4;
+        else
+            quality = integrationQuality;
 
         int cellValue = (pScan->mPoints[i].mValue == CELL_NO_OBSTACLE) ?
             CELL_NO_OBSTACLE : CELL_OBSTACLE;
@@ -323,7 +325,7 @@ void UpdateMap(
                       mapBeginX, mapBeginY,
                       mapHoleX, mapHoleY,
                       mapEndX, mapEndY,
-                      cellValue, integrationQuality);
+                      cellValue, quality);
     }
 }
 
@@ -419,9 +421,9 @@ void BuildScanFromSensorData(
     double scanAngleMin,            /* 角度の最小値 (deg) */
     double scanAngleMax,            /* 角度の最大値 (deg) */
     double scanDistNoDetection,     /* 障害物の未検知の距離 (m) */
-    double holeWidth,               /* 穴のサイズ (格子の個数) */
+    double holeWidth,               /* 穴のサイズ (m) */
     double robotVelocityXY,         /* ロボットの並進速度 (m/s) */
-    double robotVelocityAngle)      /* ロボットの回転速度 (rad/s) */
+    double robotVelocityAngle)      /* ロボットの回転速度 (deg/s) */
 {
     /* スキャンのデータ数を初期化 */
     pScan->mPointsNum = 0;
@@ -573,7 +575,7 @@ void InitializeSlamContext(
     const SensorInfo* pSensorInfo,      /* センサのパラメータ */
     const RobotInfo* pRobotInfo,        /* ロボットのパラメータ */
     const RobotPosition2D* pRobotPos,   /* ロボットの姿勢 */
-    int holeWidth,                      /* 穴のサイズ (格子の個数) */
+    double holeWidth,                   /* 穴のサイズ (m) */
     double sigmaXY,                     /* 並進移動の標準偏差 (m) */
     double sigmaTheta)                  /* 回転移動の標準偏差 (deg) */
 {
@@ -608,6 +610,7 @@ void IterativeMapBuilding(
 
     ScanData currentScan;
     RobotPosition2D currentPos = pContext->mLastRobotPos;
+    RobotPosition2D sensorPos;
 
     if (pContext->mLastTimeStamp > 0) {
         /* ロボットの位置をオドメトリにより更新 */
@@ -648,29 +651,32 @@ void IterativeMapBuilding(
     sinTheta = std::sin(thetaRad);
 
     /* ロボット位置をセンサ位置に変換 */
-    currentPos.mX += pContext->mSensorInfo.mOffsetPosX * cosTheta -
-                     pContext->mSensorInfo.mOffsetPosY * sinTheta;
-    currentPos.mY += pContext->mSensorInfo.mOffsetPosX * sinTheta +
-                     pContext->mSensorInfo.mOffsetPosY * cosTheta;
+    sensorPos = currentPos;
 
-    currentPos = MonteCarloPositionSearch(randEngine,
-                                          &currentScan,
-                                          pContext->mpMap,
-                                          &currentPos,
-                                          pContext->mSigmaXY,
-                                          pContext->mSigmaTheta,
-                                          1000,
-                                          nullptr);
+    sensorPos.mX += (pContext->mSensorInfo.mOffsetPosX * cosTheta -
+                    pContext->mSensorInfo.mOffsetPosY * sinTheta);
+    sensorPos.mY += (pContext->mSensorInfo.mOffsetPosX * sinTheta +
+                    pContext->mSensorInfo.mOffsetPosY * cosTheta);
+
+    sensorPos = MonteCarloPositionSearch(randEngine,
+                                         &currentScan,
+                                         pContext->mpMap,
+                                         &sensorPos,
+                                         pContext->mSigmaXY,
+                                         pContext->mSigmaTheta,
+                                         1000,
+                                         nullptr);
 
     /* センサ位置をロボット位置に戻す */
+    currentPos = sensorPos;
     thetaRad = DEG_TO_RAD(currentPos.mTheta);
     cosTheta = std::cos(thetaRad);
     sinTheta = std::sin(thetaRad);
 
-    currentPos.mX -= pContext->mSensorInfo.mOffsetPosX * cosTheta -
-                     pContext->mSensorInfo.mOffsetPosY * sinTheta;
-    currentPos.mY -= pContext->mSensorInfo.mOffsetPosX * sinTheta +
-                     pContext->mSensorInfo.mOffsetPosY * cosTheta;
+    currentPos.mX -= (pContext->mSensorInfo.mOffsetPosX * cosTheta -
+                     pContext->mSensorInfo.mOffsetPosY * sinTheta);
+    currentPos.mY -= (pContext->mSensorInfo.mOffsetPosX * sinTheta +
+                     pContext->mSensorInfo.mOffsetPosY * cosTheta);
 
     /* 累積走行距離の計算 */
     double travelDist = std::sqrt(
@@ -681,9 +687,10 @@ void IterativeMapBuilding(
     pContext->mAccumulatedTravelDist += travelDist;
 
     /* 地図の更新 */
+    /* 更新されたロボット位置ではなく, センサ位置を用いることに注意 */
     UpdateMap(&currentScan,
               pContext->mpMap,
-              &currentPos,
+              &sensorPos,
               50,
               pContext->mHoleWidth);
     
@@ -710,9 +717,9 @@ RobotPosition2D LoopClosurePosition(
     double scanAngleMin,                    /* 角度の最小値 (deg) */
     double scanAngleMax,                    /* 角度の最大値 (deg) */
     double scanDistNoDetection,             /* 障害物がないと判定する距離 (m) */
-    double holeWidth,                       /* 穴のサイズ (格子の個数) */
+    double holeWidth,                       /* 穴のサイズ (m) */
     double robotVelocityXY,                 /* ロボットの並進速度 (m/s) */
-    double robotVelocityAngle)              /* ロボットの回転速度 (rad/s) */
+    double robotVelocityAngle)              /* ロボットの回転速度 (deg/s) */
 {
     ScanData scanData;
     RobotPosition2D resultPos;
@@ -755,7 +762,57 @@ RobotPosition2D LoopClosurePosition(
 /*
  * ループ閉じ込みによる軌跡の調整
  */
-void LoopClosureTrajectory()
+void LoopClosureTrajectory(
+    RobotPosition2D* pFusedTrajectory,          /* 調整された軌跡 */
+    const RobotPosition2D* pForwardTrajectory,  /* 前進方向の軌跡 */
+    const RobotPosition2D* pBackwardTrajectory, /* 後進方向の軌跡 */
+    int scanSize)                               /* ループ閉じ込みに用いるスキャンデータの個数 */
 {
+    double weightBackward;
+    double weightForward;
+    double backwardTheta;
+    double forwardTheta;
+    RobotPosition2D* pFusedPos;
+    
+    /* 角度を0度から360度までの範囲にクリップ */
+    auto clipTheta = [](double angle) {
+        while (angle < 0)
+            angle += 360.0;
+        while (angle >= 360.0)
+            angle -= 360.0;
+        return angle;
+    };
+
+    for (int i = 0; i < scanSize; ++i) {
+        /* 軌跡の開始地点近くでは, 前進方向のデータの重みを大きく,
+         * 軌跡の終点近くでは, 後進方向のデータの重みを大きくする */
+        weightBackward = static_cast<double>(i) /
+                         static_cast<double>(scanSize - 1);
+        weightForward = 1.0 - weightBackward;
+        
+        /* 前進方向と後進方向の2つの姿勢を, 重みを使って線形結合し,
+         * ループ閉じ込み後の姿勢を算出 */
+        pFusedPos = &(pFusedTrajectory[i]);
+        
+        /* pForwardTrajectoryとpBackwardTrajectoryを適当に線形結合 */
+        pFusedPos->mX = weightForward * pForwardTrajectory[i].mX +
+                        weightBackward * pBackwardTrajectory[i].mX;
+        pFusedPos->mY = weightForward * pForwardTrajectory[i].mY +
+                        weightBackward * pBackwardTrajectory[i].mY;
+        
+        /* 角度が-180度から180度の間に収まるように調節 */
+        forwardTheta = clipTheta(pForwardTrajectory[i].mTheta);
+        backwardTheta = clipTheta(pBackwardTrajectory[i].mTheta);
+
+        if (std::fabs(forwardTheta - backwardTheta) >= 180.0) {
+            if (forwardTheta > backwardTheta)
+                forwardTheta -= 360.0;
+            else
+                backwardTheta -= 360.0;
+        }
+
+        pFusedPos->mTheta = weightForward * forwardTheta +
+                            weightBackward * backwardTheta;
+    }
 }
 

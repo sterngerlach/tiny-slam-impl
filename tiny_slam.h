@@ -120,7 +120,7 @@ struct SlamContext
     double          mLastRobotVelocityXY;       /* 以前のロボットの並進速度 (m/s) */
     double          mLastRobotVelocityAngle;    /* 以前のロボットの回転速度 (rad/s) */
     double          mAccumulatedTravelDist;     /* 累積走行距離 (m) */
-    int             mHoleWidth;                 /* 穴のサイズ (格子の個数) */
+    double          mHoleWidth;                 /* 穴のサイズ (m) */
     double          mSigmaXY;                   /* 並進移動の標準偏差 (m) */
     double          mSigmaTheta;                /* 回転移動の標準偏差 (m) */
 };
@@ -162,7 +162,7 @@ void UpdateMap(
     GridMap* pMap,                  /* 占有格子地図 */
     const RobotPosition2D* pPos,    /* ロボットの姿勢 */
     int integrationQuality,         /* 混合率 */
-    int holeWidth);                 /* 穴のサイズ (格子の個数) */
+    double holeWidth);              /* 穴のサイズ (m) */
 
 /*
  * モンテカルロ法による位置探索
@@ -189,7 +189,7 @@ void BuildScanFromSensorData(
     double scanAngleMin,            /* 角度の最小値 (deg) */
     double scanAngleMax,            /* 角度の最大値 (deg) */
     double scanDistNoDetection,     /* 障害物の未検知の距離 (m) */
-    double holeWidth,               /* 穴のサイズ (格子の個数) */
+    double holeWidth,               /* 穴のサイズ (m) */
     double robotVelocityXY,         /* ロボットの並進速度 (m/s) */
     double robotVelocityAngle);     /* ロボットの回転速度 (rad/s) */
 
@@ -234,7 +234,7 @@ void InitializeSlamContext(
     const SensorInfo* pSensorInfo,      /* センサのパラメータ */
     const RobotInfo* pRobotInfo,        /* ロボットのパラメータ */
     const RobotPosition2D* pRobotPos,   /* ロボットの姿勢 */
-    int holeWidth,                      /* 穴のサイズ (格子の個数) */
+    double holeWidth,                   /* 穴のサイズ (m) */
     double sigmaXY,                     /* 並進移動の標準偏差 (m) */
     double sigmaTheta);                 /* 回転移動の標準偏差 (m) */
 
@@ -260,9 +260,18 @@ RobotPosition2D LoopClosurePosition(
     double scanAngleMin,                    /* 角度の最小値 (deg) */
     double scanAngleMax,                    /* 角度の最大値 (deg) */
     double scanDistNoDetection,             /* 障害物がないと判定する距離 (m) */
-    double holeWidth,                       /* 穴のサイズ (格子の個数) */
+    double holeWidth,                       /* 穴のサイズ (m) */
     double robotVelocityXY,                 /* ロボットの並進速度 (m/s) */
     double robotVelocityAngle);             /* ロボットの回転速度 (rad/s) */
+
+/*
+ * ループ閉じ込みによる軌跡の調整
+ */
+void LoopClosureTrajectory(
+    RobotPosition2D* pFusedTrajectory,          /* 調整された軌跡 */
+    const RobotPosition2D* pForwardTrajectory,  /* 前進方向の軌跡 */
+    const RobotPosition2D* pBackwardTrajectory, /* 後進方向の軌跡 */
+    int scanSize);                              /* ループ閉じ込みに用いるスキャンデータの個数 */
 
 #endif /* TINY_SLAM_H */
 
