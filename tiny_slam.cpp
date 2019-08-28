@@ -18,12 +18,13 @@ double DistanceRobotPosition2D(const RobotPosition2D* pPos0,
 /*
  * 占有格子地図の初期化
  */
-void InitializeGridMap(GridMap* pMap)
+void InitializeGridMap(GridMap* pMap,
+                       std::uint16_t initValue)
 {
     /* 全ての格子をCELL_UNKNOWNで初期化 */
     for (int i = 0; i < MAP_SIZE; ++i)
         for (int j = 0; j < MAP_SIZE; ++j)
-            pMap->mCells[i * MAP_SIZE + j] = CELL_UNKNOWN;
+            pMap->mCells[i * MAP_SIZE + j] = initValue;
 }
 
 /*

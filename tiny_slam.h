@@ -147,7 +147,8 @@ double DistanceRobotPosition2D(const RobotPosition2D* pPos0,
 /*
  * 占有格子地図の初期化
  */
-void InitializeGridMap(GridMap* pMap);
+void InitializeGridMap(GridMap* pMap,
+                       std::uint16_t initValue = CELL_UNKNOWN);
 
 /*
  * ロボットの計測と地図との相違を計算
