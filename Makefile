@@ -2,7 +2,7 @@
 # Makefile
 
 CXX = g++
-CFLAGS = -O3 -Wall -Wextra -std=c++1z `pkg-config eigen3 --cflags`
+CFLAGS = -O3 -Wall -Wextra -msse3 -std=c++1z `pkg-config eigen3 --cflags`
 LDFLAGS = -lm `pkg-config eigen3 --libs`
 
 OBJDIR = ./obj

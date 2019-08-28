@@ -2,6 +2,7 @@
 /* tiny_slam.cpp */
 
 #include "tiny_slam.h"
+#include "tiny_slam_sse.h"
 
 #include <iostream>
 
@@ -347,7 +348,8 @@ RobotPosition2D MonteCarloPositionSearch(
     RobotPosition2D bestPos = *pStartPos;
     RobotPosition2D lastBestPos = *pStartPos;
 
-    int currentDist = DistanceScanToMap(pScan, pMap, &currentPos);
+    /* int currentDist = DistanceScanToMap(pScan, pMap, &currentPos); */
+    int currentDist = DistanceScanToMapSSE(pScan, pMap, &currentPos); 
     int bestDist = currentDist;
     int lastBestDist = currentDist;
     
@@ -368,7 +370,8 @@ RobotPosition2D MonteCarloPositionSearch(
         currentPos.mTheta += normalDistTheta(randEngine);
         
         /* スキャンと現在位置との相違を計算 */
-        currentDist = DistanceScanToMap(pScan, pMap, &currentPos);
+        /* currentDist = DistanceScanToMap(pScan, pMap, &currentPos); */
+        currentDist = DistanceScanToMapSSE(pScan, pMap, &currentPos);
 
         if (currentDist < bestDist) {
             /* 最善なロボット位置を更新 */
