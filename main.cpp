@@ -82,9 +82,10 @@ bool ReadSensorData(const char* fileName,
 
 int main(int argc, char** argv)
 {
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " "
-                  << "<data file name>" << '\n';
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << ' '
+                  << "<data file name>" << ' '
+                  << "[<loop index>]" << '\n';
         return EXIT_FAILURE;
     }
 
@@ -94,6 +95,7 @@ int main(int argc, char** argv)
     
     /* オドメトリとスキャンデータを格納するファイル名 */
     std::string fileName = argv[1];
+
     size_t lastPeriodIndex = fileName.find_last_of('.');
     std::string dataName =
         (lastPeriodIndex == std::string::npos) ?
@@ -105,6 +107,22 @@ int main(int argc, char** argv)
     if (!ReadSensorData(fileName.c_str(), sensorData)) {
         std::cerr << "Failed to load file \'" << fileName << "\'\n";
         return EXIT_FAILURE;
+    }
+
+    /* ループした時点でのデータのインデックス */
+    int loopNum;
+    int loopEndIndex[2];
+
+    if (argc == 3) {
+        /* ループするときのインデックスが指定されている場合 */
+        loopNum = 2;
+        loopEndIndex[0] = std::stoi(argv[2]);
+        loopEndIndex[1] = static_cast<int>(sensorData.size());
+    } else {
+        /* データにループが含まれない場合 */
+        loopNum = 1;
+        loopEndIndex[0] = static_cast<int>(sensorData.size());
+        loopEndIndex[1] = -1;
     }
 
     /* ロボットのパラメータの設定 */
@@ -134,9 +152,14 @@ int main(int argc, char** argv)
     /* 地図の初期化 */
     GridMap* pResultMap = new GridMap();
     InitializeGridMap(pResultMap);
-
+    
+    /* ロボットの軌跡を記録するために用いる地図 */
     GridMap* pTrajectoryMap = new GridMap();
     InitializeGridMap(pTrajectoryMap);
+    
+    /* ループ閉じ込み(位置調整)のために用いる地図 */
+    GridMap* pLoopMap = new GridMap();
+    InitializeGridMap(pLoopMap);
     
     /* TinySLAMの実行 */
     SlamContext slamContext;
@@ -149,22 +172,31 @@ int main(int argc, char** argv)
     
     /* 各ループごとに処理を実行 */
     /* ここでは途中のループ検出を考慮しない */
-    for (loopCount = 0; loopCount < 1; ++loopCount) {
+    for (loopCount = 0; loopCount < loopNum; ++loopCount) {
         /* SLAMの状態の初期化 */
         InitializeSlamContext(&slamContext,
-                              pResultMap, &sensorInfo, &robotInfo, &startPos, 
+                              pResultMap, &sensorInfo,
+                              &robotInfo, &loopStartPos, 
                               0.6, 0.1, 20.0);
 
         /* 各センサデータごとの処理を開始 */
-        for (scanIndex = loopStart; scanIndex < 350; ++scanIndex) {
+        for (scanIndex = loopStart;
+             scanIndex < loopEndIndex[loopCount]; ++scanIndex) {
             /* センサデータを基に地図を構築 */
-            IterativeMapBuilding(randEngine, &sensorData[scanIndex], &slamContext);
+            IterativeMapBuilding(randEngine,
+                                 &sensorData[scanIndex],
+                                 &slamContext,
+                                 true);
 
             /* 現在のロボットの姿勢を表示 */
             std::cerr << "Scan " << scanIndex << ", "
                       << "Robot position x: " << slamContext.mLastRobotPos.mX << ", "
                       << "y: " << slamContext.mLastRobotPos.mY << ", "
                       << "theta: " << slamContext.mLastRobotPos.mTheta << '\n';
+
+            /* ループ閉じ込みに用いる地図を保存 */
+            if (scanIndex == 50)
+                *pLoopMap = *pResultMap;
             
             /* ロボットの軌跡を記録 */
             int mapX = static_cast<int>(std::floor(
@@ -176,7 +208,8 @@ int main(int argc, char** argv)
                 mapY >= 0 && mapY < MAP_SIZE)
                 pTrajectoryMap->mCells[mapY * MAP_SIZE + mapX] = 0;
         }
-
+        
+        /* 累積走行距離や姿勢を表示 */
         std::cerr << "Accumulated travel distance: "
                   << slamContext.mAccumulatedTravelDist << '\n';
         std::cerr << "Start position x: " << startPos.mX << ", "
@@ -195,9 +228,133 @@ int main(int argc, char** argv)
         SaveMapImagePgm(pResultMap, pTrajectoryMap,
                         forwardFileName.c_str(),
                         MAP_SIZE, MAP_SIZE, MAP_SIZE, MAP_SIZE);
+
+        /* 簡易的なループ閉じ込みの実行 */
+        std::cerr << "Performing loop closure ..." << '\n';
+        
+        /* ロボット位置をセンサ位置に変換 */
+        RobotPosition2D sensorPos = slamContext.mLastRobotPos;
+        double cosTheta = std::cos(DEG_TO_RAD(sensorPos.mTheta));
+        double sinTheta = std::sin(DEG_TO_RAD(sensorPos.mTheta));
+
+        sensorPos.mX += (slamContext.mSensorInfo.mOffsetPosX * cosTheta -
+                         slamContext.mSensorInfo.mOffsetPosY * sinTheta);
+        sensorPos.mY += (slamContext.mSensorInfo.mOffsetPosX * sinTheta +
+                         slamContext.mSensorInfo.mOffsetPosY * cosTheta);
+        
+        /* スキャンと地図との相違 */
+        int bestDistScanAndMap;
+
+        RobotPosition2D loopEndPos = LoopClosurePosition(
+            randEngine,
+            &sensorData[loopEndIndex[loopCount] - 1],
+            pLoopMap,
+            &sensorPos,
+            slamContext.mSensorInfo.mFrequency,
+            slamContext.mSensorInfo.mDetectionMargin,
+            slamContext.mSensorInfo.mScanSize,
+            slamContext.mSensorInfo.mAngleMin,
+            slamContext.mSensorInfo.mAngleMax,
+            slamContext.mSensorInfo.mDistNoDetection,
+            slamContext.mHoleWidth,
+            &bestDistScanAndMap);
+        
+        /* センサ位置をロボット位置に戻す */
+        cosTheta = std::cos(DEG_TO_RAD(loopEndPos.mTheta));
+        sinTheta = std::sin(DEG_TO_RAD(loopEndPos.mTheta));
+
+        loopEndPos.mX -= (slamContext.mSensorInfo.mOffsetPosX * cosTheta -
+                          slamContext.mSensorInfo.mOffsetPosY * sinTheta);
+        loopEndPos.mY -= (slamContext.mSensorInfo.mOffsetPosX * sinTheta +
+                          slamContext.mSensorInfo.mOffsetPosY * cosTheta);
+        
+        /* ループ閉じ込み後のロボットの姿勢 */
+        std::cout << "Position after loop-closure x: " << loopEndPos.mX << ", "
+                  << "y: " << loopEndPos.mY << ", "
+                  << "theta: " << loopEndPos.mTheta << '\n';
+        
+        /* ループ閉じ込み前後の姿勢の変化量 */
+        double distanceDiff = DistanceRobotPosition2D(
+            &loopEndPos, &(slamContext.mLastRobotPos));
+        double angleDiff = std::fabs(
+            loopEndPos.mTheta - slamContext.mLastRobotPos.mTheta);
+
+        std::cout << "Distance difference (m): " << distanceDiff << ", "
+                  << "angle difference (deg): " << angleDiff << '\n';
+        
+        /* 地図をループ閉じ込みに用いたもので置き換える */
+        *pResultMap = *pLoopMap;
+
+        /* ロボットの軌跡を消去 */
+        InitializeGridMap(pTrajectoryMap);
+
+        /* SLAMの状態を再度リセット */
+        InitializeSlamContext(&slamContext,
+                              pResultMap, &sensorInfo, &robotInfo, &loopEndPos,
+                              0.6, 0.1, 20.0);
+        
+        /* 復路のSLAMを実行 */
+        for (scanIndex = loopEndIndex[loopCount] - 1;
+             scanIndex >= loopStart; --scanIndex) {
+            /* センサデータを再度用いて地図を構築 */
+            IterativeMapBuilding(randEngine,
+                                 &sensorData[scanIndex],
+                                 &slamContext,
+                                 false);
+
+            /* 現在のロボットの姿勢を表示 */
+            std::cerr << "Scan " << scanIndex << ", "
+                      << "Robot position x: " << slamContext.mLastRobotPos.mX << ", "
+                      << "y: " << slamContext.mLastRobotPos.mY << ", "
+                      << "theta: " << slamContext.mLastRobotPos.mTheta << '\n';
+            
+            /* ロボットの軌跡を記録 */
+            int mapX = static_cast<int>(std::floor(
+                slamContext.mLastRobotPos.mX * CELLS_PER_METER + 0.5));
+            int mapY = static_cast<int>(std::floor(
+                slamContext.mLastRobotPos.mY * CELLS_PER_METER + 0.5));
+
+            if (mapX >= 0 && mapX < MAP_SIZE &&
+                mapY >= 0 && mapY < MAP_SIZE)
+                pTrajectoryMap->mCells[mapY * MAP_SIZE + mapX] = 0;
+        }
+
+        /* 復路の累積走行距離や現在の姿勢を表示 */
+        std::cerr << "Accumulated travel distance (backward): "
+                  << slamContext.mAccumulatedTravelDist << '\n';
+        
+        /* 開始点との位置ずれ */
+        distanceDiff = DistanceRobotPosition2D(
+            &startPos, &(slamContext.mLastRobotPos));
+        std::cerr << "Distance between start point: " << distanceDiff << '\n';
+
+        /* 復路の地図を画像として保存 */
+        std::string backwardFileName = dataName;
+        backwardFileName += "-loop";
+        backwardFileName += std::to_string(loopCount);
+        backwardFileName += "-backward.pgm";
+
+        SaveMapImagePgm(pResultMap, pTrajectoryMap,
+                        backwardFileName.c_str(),
+                        MAP_SIZE, MAP_SIZE, MAP_SIZE, MAP_SIZE);
+
+        /* 簡易的なループ閉じ込みの実行 */
+        std::cerr << "Performing loop closure (backward)..." << '\n';
+
+        LoopClosureTrajectory(&(sensorData[loopStart]),
+                              loopEndIndex[loopCount] - loopStart);
+        
+        /* ループ閉じ込みに用いる地図を更新 */
+        *pLoopMap = *pResultMap;
+
+        loopStartPos = loopEndPos;
+        loopStart = loopEndIndex[loopCount];
     }
     
     /* 地図の破棄 */
+    delete pLoopMap;
+    pLoopMap = nullptr;
+
     delete pTrajectoryMap;
     pTrajectoryMap = nullptr;
 
