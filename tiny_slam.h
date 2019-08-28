@@ -58,18 +58,6 @@ struct ScanData
 };
 
 /*
- * センサデータ
- */
-struct SensorData
-{
-    std::uint32_t mTimeStamp;           /* データ取得時のタイムスタンプ (us) */
-    int           mValue[SCAN_SIZE];    /* 距離値の集合 (mm) */
-    int           mDataNum;             /* 実際のデータの個数 */
-    int           mOdometerCountLeft;   /* 左側の車輪のカウンタ */
-    int           mOdometerCountRight;  /* 右側の車輪のカウンタ */
-};
-
-/*
  * ロボットの位置
  */
 struct RobotPosition2D
@@ -78,6 +66,31 @@ struct RobotPosition2D
     double mY;      /* 地図座標系におけるy座標 (m) */
     double mTheta;  /* 回転角 (deg) */
 };
+
+/*
+ * センサデータ
+ */
+struct SensorData
+{
+    std::uint32_t   mTimeStamp;             /* データ取得時のタイムスタンプ (us) */
+    int             mValue[SCAN_SIZE];      /* 距離値の集合 (mm) */
+    int             mDataNum;               /* 実際のデータの個数 */
+    int             mOdometerCountLeft;     /* 左側の車輪のカウンタ */
+    int             mOdometerCountRight;    /* 右側の車輪のカウンタ */
+    
+    /* 往路でのロボットの速度 */
+    double          mRobotVelocityXY;       /* ロボットの並進速度 (m/s) */
+    double          mRobotVelocityAngle;    /* ロボットの回転速度 (rad/s) */
+
+    /* 0番目のインデックスは往路, 1番目のインデックスは復路,
+     * 2番目のインデックスはループ閉じ込み後に使用 */
+    RobotPosition2D mPositions[3];          /* データ取得時のロボットの姿勢 */
+};
+
+/* SensorData::mPositionsのインデックス */
+#define POSITION_FORWARD        0
+#define POSITION_BACKWARD       1
+#define POSITION_LOOP_CLOSURE   2
 
 /*
  * センサのパラメータ
@@ -181,7 +194,7 @@ RobotPosition2D MonteCarloPositionSearch(
  */
 void BuildScanFromSensorData(
     ScanData* pScan,                /* スキャンデータ */
-    const SensorData* pSensorData,  /* センサデータ */
+    SensorData* pSensorData,        /* センサデータ */
     double scanFrequency,           /* 1秒間のスキャン回数 (Hz) */
     int scanDetectionMargin,        /* 取り除く両端のデータ数 */
     int scanSize,                   /* センサデータの個数 */
@@ -189,9 +202,7 @@ void BuildScanFromSensorData(
     double scanAngleMin,            /* 角度の最小値 (deg) */
     double scanAngleMax,            /* 角度の最大値 (deg) */
     double scanDistNoDetection,     /* 障害物の未検知の距離 (m) */
-    double holeWidth,               /* 穴のサイズ (m) */
-    double robotVelocityXY,         /* ロボットの並進速度 (m/s) */
-    double robotVelocityAngle);     /* ロボットの回転速度 (rad/s) */
+    double holeWidth);              /* 穴のサイズ (m) */
 
 /*
  * センサデータをスキャンに追加
@@ -243,15 +254,16 @@ void InitializeSlamContext(
  */
 void IterativeMapBuilding(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
-    const SensorData* pSensorData,          /* センサデータ */
-    SlamContext* pContext);                 /* SLAMの状態 */
+    SensorData* pSensorData,                /* センサデータ */
+    SlamContext* pContext,                  /* SLAMの状態 */
+    bool isForward);                        /* 往路かどうか */
 
 /*
  * ループ閉じ込みによるロボットの姿勢調整
  */
 RobotPosition2D LoopClosurePosition(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
-    const SensorData* pSensorData,          /* センサデータ */
+    SensorData* pSensorData,                /* センサデータ */
     const GridMap* pMap,                    /* 占有格子地図 */
     const RobotPosition2D* pStartPos,       /* 探索開始点 */
     double scanFrequency,                   /* 1秒間のスキャン回数 (Hz) */
@@ -261,17 +273,14 @@ RobotPosition2D LoopClosurePosition(
     double scanAngleMax,                    /* 角度の最大値 (deg) */
     double scanDistNoDetection,             /* 障害物がないと判定する距離 (m) */
     double holeWidth,                       /* 穴のサイズ (m) */
-    double robotVelocityXY,                 /* ロボットの並進速度 (m/s) */
-    double robotVelocityAngle);             /* ロボットの回転速度 (rad/s) */
+    int* pBestDistScanAndMap);              /* スキャンと地図との相違 */
 
 /*
  * ループ閉じ込みによる軌跡の調整
  */
 void LoopClosureTrajectory(
-    RobotPosition2D* pFusedTrajectory,          /* 調整された軌跡 */
-    const RobotPosition2D* pForwardTrajectory,  /* 前進方向の軌跡 */
-    const RobotPosition2D* pBackwardTrajectory, /* 後進方向の軌跡 */
-    int scanSize);                              /* ループ閉じ込みに用いるスキャンデータの個数 */
+    SensorData* pSensorDataArray,   /* ロボットの軌跡 */
+    int scanSize);                  /* ループ閉じ込みに用いるスキャンデータの個数 */
 
 #endif /* TINY_SLAM_H */
 

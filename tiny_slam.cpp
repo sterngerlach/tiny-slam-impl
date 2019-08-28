@@ -413,7 +413,7 @@ RobotPosition2D MonteCarloPositionSearch(
  */
 void BuildScanFromSensorData(
     ScanData* pScan,                /* スキャンデータ */
-    const SensorData* pSensorData,  /* センサデータ */
+    SensorData* pSensorData,        /* センサデータ */
     double scanFrequency,           /* 1秒間のスキャン回数 (Hz) */
     int scanDetectionMargin,        /* 取り除く両端のデータ数 */
     int scanSize,                   /* センサデータの個数 */
@@ -421,9 +421,7 @@ void BuildScanFromSensorData(
     double scanAngleMin,            /* 角度の最小値 (deg) */
     double scanAngleMax,            /* 角度の最大値 (deg) */
     double scanDistNoDetection,     /* 障害物の未検知の距離 (m) */
-    double holeWidth,               /* 穴のサイズ (m) */
-    double robotVelocityXY,         /* ロボットの並進速度 (m/s) */
-    double robotVelocityAngle)      /* ロボットの回転速度 (deg/s) */
+    double holeWidth)               /* 穴のサイズ (m) */
 {
     /* スキャンのデータ数を初期化 */
     pScan->mPointsNum = 0;
@@ -437,8 +435,10 @@ void BuildScanFromSensorData(
      * センサデータからロボットの並進と回転を取り除く必要がある */
     /* ロボットの局所座標系におけるx座標のみを扱えばよい
      * センサが1度回転するときの並進量と姿勢の回転量 */
-    double horizontalShift = robotVelocityXY / rotationAnglePerSecond;
-    double rotationShift = robotVelocityAngle / rotationAnglePerSecond;
+    double horizontalShift =
+        pSensorData->mRobotVelocityXY / rotationAnglePerSecond;
+    double rotationShift =
+        pSensorData->mRobotVelocityAngle / rotationAnglePerSecond;
 
     /* センサデータをscanSpan個だけ補間することで精度を高める */
     
@@ -599,8 +599,9 @@ void InitializeSlamContext(
  */
 void IterativeMapBuilding(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
-    const SensorData* pSensorData,          /* センサデータ */
-    SlamContext* pContext)                  /* SLAMの状態 */
+    SensorData* pSensorData,                /* センサデータ */
+    SlamContext* pContext,                  /* SLAMの状態 */
+    bool isForward)                         /* 往路かどうか */
 {
     double robotVelocityXY;
     double robotVelocityAngle;
@@ -629,6 +630,18 @@ void IterativeMapBuilding(
     } else {
         robotVelocityXY = 0.0;
         robotVelocityAngle = 0.0;
+
+        /* 1時刻前のロボットの速度も0とする */
+        pContext->mLastRobotVelocityXY = 0.0;
+        pContext->mLastRobotVelocityAngle = 0.0;
+    }
+    
+    /* 往路であれば, センサデータ取得時の速度を記録 */
+    /* 往路の後に復路を実行することを想定 */
+    if (isForward) {
+        /* 1時刻前のロボットの速度を設定 (遅延の考慮) */
+        pSensorData->mRobotVelocityXY = pContext->mLastRobotVelocityXY;
+        pSensorData->mRobotVelocityAngle = pContext->mLastRobotVelocityAngle;
     }
 
     /* センサデータからスキャンを構築 */
@@ -641,9 +654,7 @@ void IterativeMapBuilding(
                             pContext->mSensorInfo.mAngleMin,
                             pContext->mSensorInfo.mAngleMax,
                             pContext->mSensorInfo.mDistNoDetection,
-                            pContext->mHoleWidth,
-                            pContext->mLastRobotVelocityXY,
-                            pContext->mLastRobotVelocityAngle);
+                            pContext->mHoleWidth);
 
     /* モンテカルロ探索による自己位置推定 */
     thetaRad = DEG_TO_RAD(currentPos.mTheta);
@@ -654,9 +665,9 @@ void IterativeMapBuilding(
     sensorPos = currentPos;
 
     sensorPos.mX += (pContext->mSensorInfo.mOffsetPosX * cosTheta -
-                    pContext->mSensorInfo.mOffsetPosY * sinTheta);
+                     pContext->mSensorInfo.mOffsetPosY * sinTheta);
     sensorPos.mY += (pContext->mSensorInfo.mOffsetPosX * sinTheta +
-                    pContext->mSensorInfo.mOffsetPosY * cosTheta);
+                     pContext->mSensorInfo.mOffsetPosY * cosTheta);
 
     sensorPos = MonteCarloPositionSearch(randEngine,
                                          &currentScan,
@@ -677,6 +688,12 @@ void IterativeMapBuilding(
                      pContext->mSensorInfo.mOffsetPosY * sinTheta);
     currentPos.mY -= (pContext->mSensorInfo.mOffsetPosX * sinTheta +
                      pContext->mSensorInfo.mOffsetPosY * cosTheta);
+
+    /* データ取得時のロボットの姿勢を記録 */
+    if (isForward)
+        pSensorData->mPositions[POSITION_FORWARD] = currentPos;
+    else
+        pSensorData->mPositions[POSITION_BACKWARD] = currentPos;
 
     /* 累積走行距離の計算 */
     double travelDist = std::sqrt(
@@ -708,7 +725,7 @@ void IterativeMapBuilding(
  */
 RobotPosition2D LoopClosurePosition(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
-    const SensorData* pSensorData,          /* センサデータ */
+    SensorData* pSensorData,                /* センサデータ */
     const GridMap* pMap,                    /* 占有格子地図 */
     const RobotPosition2D* pStartPos,       /* 探索開始点 */
     double scanFrequency,                   /* 1秒間のスキャン回数 (Hz) */
@@ -718,14 +735,12 @@ RobotPosition2D LoopClosurePosition(
     double scanAngleMax,                    /* 角度の最大値 (deg) */
     double scanDistNoDetection,             /* 障害物がないと判定する距離 (m) */
     double holeWidth,                       /* 穴のサイズ (m) */
-    double robotVelocityXY,                 /* ロボットの並進速度 (m/s) */
-    double robotVelocityAngle)              /* ロボットの回転速度 (deg/s) */
+    int* pBestDistScanAndMap)               /* スキャンと地図との相違 */
 {
     ScanData scanData;
     RobotPosition2D resultPos;
-    int bestDistScanAndMap;
 
-    /* ロボットの姿勢がpStartPosにあり,
+    /* ロボットの姿勢(センサ位置)がpStartPosにあり,
      * そのときのセンサデータがpSensorDataであるとき,
      * 誤差がそれ程累積されていない以前の地図pMapと,
      * pSensorDataから生成したスキャンデータscanDataを
@@ -742,9 +757,7 @@ RobotPosition2D LoopClosurePosition(
                             scanAngleMin,
                             scanAngleMax,
                             scanDistNoDetection,
-                            holeWidth,
-                            robotVelocityXY,
-                            robotVelocityAngle);
+                            holeWidth);
 
     /* モンテカルロ探索により姿勢を調整 */
     resultPos = MonteCarloPositionSearch(randEngine,
@@ -754,7 +767,7 @@ RobotPosition2D LoopClosurePosition(
                                          0.6,
                                          20.0,
                                          1e5,
-                                         &bestDistScanAndMap);
+                                         pBestDistScanAndMap);
 
     return resultPos;
 }
@@ -763,10 +776,8 @@ RobotPosition2D LoopClosurePosition(
  * ループ閉じ込みによる軌跡の調整
  */
 void LoopClosureTrajectory(
-    RobotPosition2D* pFusedTrajectory,          /* 調整された軌跡 */
-    const RobotPosition2D* pForwardTrajectory,  /* 前進方向の軌跡 */
-    const RobotPosition2D* pBackwardTrajectory, /* 後進方向の軌跡 */
-    int scanSize)                               /* ループ閉じ込みに用いるスキャンデータの個数 */
+    SensorData* pSensorDataArray,   /* ロボットの軌跡 */
+    int scanSize)                   /* ループ閉じ込みに用いるスキャンデータの個数 */
 {
     double weightBackward;
     double weightForward;
@@ -792,17 +803,22 @@ void LoopClosureTrajectory(
         
         /* 前進方向と後進方向の2つの姿勢を, 重みを使って線形結合し,
          * ループ閉じ込み後の姿勢を算出 */
-        pFusedPos = &(pFusedTrajectory[i]);
+        pFusedPos = &(pSensorDataArray[i].mPositions[POSITION_LOOP_CLOSURE]);
         
         /* pForwardTrajectoryとpBackwardTrajectoryを適当に線形結合 */
-        pFusedPos->mX = weightForward * pForwardTrajectory[i].mX +
-                        weightBackward * pBackwardTrajectory[i].mX;
-        pFusedPos->mY = weightForward * pForwardTrajectory[i].mY +
-                        weightBackward * pBackwardTrajectory[i].mY;
+        RobotPosition2D forwardPos =
+            pSensorDataArray[i].mPositions[POSITION_FORWARD];
+        RobotPosition2D backwardPos =
+            pSensorDataArray[i].mPositions[POSITION_BACKWARD];
+
+        pFusedPos->mX = weightForward * forwardPos.mX +
+                        weightBackward * backwardPos.mX;
+        pFusedPos->mY = weightForward * forwardPos.mY +
+                        weightBackward * backwardPos.mY;
         
         /* 角度が-180度から180度の間に収まるように調節 */
-        forwardTheta = clipTheta(pForwardTrajectory[i].mTheta);
-        backwardTheta = clipTheta(pBackwardTrajectory[i].mTheta);
+        forwardTheta = clipTheta(forwardPos.mTheta);
+        backwardTheta = clipTheta(backwardPos.mTheta);
 
         if (std::fabs(forwardTheta - backwardTheta) >= 180.0) {
             if (forwardTheta > backwardTheta)
