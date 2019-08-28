@@ -160,6 +160,9 @@ int main(int argc, char** argv)
     /* ループ閉じ込み(位置調整)のために用いる地図 */
     GridMap* pLoopMap = new GridMap();
     InitializeGridMap(pLoopMap);
+
+    /* スキャン点を描画するための地図 */
+    GridMap* pScanMap = new GridMap();
     
     /* TinySLAMの実行 */
     SlamContext slamContext;
@@ -343,7 +346,43 @@ int main(int argc, char** argv)
 
         LoopClosureTrajectory(&(sensorData[loopStart]),
                               loopEndIndex[loopCount] - loopStart);
+
+        /* ループ閉じ込み後の地図を作成 */
+        DrawMap(pResultMap, pScanMap,
+                sensorData.data(),
+                loopEndIndex[loopCount],
+                slamContext.mSensorInfo.mFrequency,
+                slamContext.mSensorInfo.mDetectionMargin,
+                slamContext.mSensorInfo.mScanSize,
+                slamContext.mSensorInfo.mAngleMin,
+                slamContext.mSensorInfo.mAngleMax,
+                slamContext.mSensorInfo.mDistNoDetection,
+                slamContext.mHoleWidth,
+                slamContext.mSensorInfo.mOffsetPosX,
+                slamContext.mSensorInfo.mOffsetPosY);
+
+        /* ループ閉じ込み後の地図を画像で保存 */
+        /* 画像に記録される軌跡は正しくない (再計算を行う必要) */
+        std::string finalFileName = dataName;
+        finalFileName += "-loop";
+        finalFileName += std::to_string(loopCount);
+        finalFileName += "-final.pgm";
         
+        SaveMapImagePgm(pResultMap, pTrajectoryMap,
+                        finalFileName.c_str(),
+                        MAP_SIZE, MAP_SIZE, MAP_SIZE, MAP_SIZE);
+
+        /* スキャン点の地図を画像で保存 */
+        /* 画像に記録される軌跡は正しくない (再計算を行う必要) */
+        std::string scanFileName = dataName;
+        scanFileName += "-loop";
+        scanFileName += std::to_string(loopCount);
+        scanFileName += "-scans.pgm";
+
+        SaveMapImagePgm(pScanMap, pTrajectoryMap,
+                        scanFileName.c_str(),
+                        MAP_SIZE, MAP_SIZE, MAP_SIZE, MAP_SIZE);
+
         /* ループ閉じ込みに用いる地図を更新 */
         *pLoopMap = *pResultMap;
 
@@ -352,6 +391,8 @@ int main(int argc, char** argv)
     }
     
     /* 地図の破棄 */
+    delete pScanMap;
+
     delete pLoopMap;
     pLoopMap = nullptr;
 
