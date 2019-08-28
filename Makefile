@@ -2,7 +2,7 @@
 # Makefile
 
 CXX = g++
-CFLAGS = -Os -Wall -Wextra -std=c++1z `pkg-config eigen3 --cflags`
+CFLAGS = -O3 -Wall -Wextra -std=c++1z `pkg-config eigen3 --cflags`
 LDFLAGS = -lm `pkg-config eigen3 --libs`
 
 OBJDIR = ./obj
@@ -28,6 +28,9 @@ $(OBJDIR)/%.o : %.cpp
 
 clean:
 	rm -f $(OBJECTS) $(DEPENDS)
+
+test:
+	$(TARGET) ./data/exp1.dat 350
 
 .PHONY: clean
 .PHONY: debug
