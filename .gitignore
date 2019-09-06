@@ -39,4 +39,5 @@ bin/
 obj/
 data/
 results/
+.vscode/
 
