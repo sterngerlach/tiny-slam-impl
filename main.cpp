@@ -163,6 +163,9 @@ int main(int argc, char** argv)
 
     /* スキャン点を描画するための地図 */
     GridMap* pScanMap = new GridMap();
+
+    /* 格子の値の更新方法 */
+    bool useModifiedCellModel = false;
     
     /* TinySLAMの実行 */
     SlamContext slamContext;
@@ -189,7 +192,8 @@ int main(int argc, char** argv)
             IterativeMapBuilding(randEngine,
                                  &sensorData[scanIndex],
                                  &slamContext,
-                                 true);
+                                 true,
+                                 useModifiedCellModel);
 
             /* 現在のロボットの姿勢を表示 */
             std::cerr << "Scan " << scanIndex << ", "
@@ -303,7 +307,8 @@ int main(int argc, char** argv)
             IterativeMapBuilding(randEngine,
                                  &sensorData[scanIndex],
                                  &slamContext,
-                                 false);
+                                 false,
+                                 useModifiedCellModel);
 
             /* 現在のロボットの姿勢を表示 */
             std::cerr << "Scan " << scanIndex << ", "

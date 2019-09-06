@@ -36,6 +36,7 @@
 struct GridMap
 {
     std::uint16_t mCells[MAP_SIZE * MAP_SIZE];
+    std::uint32_t mNums[MAP_SIZE * MAP_SIZE];
 };
 
 /*
@@ -166,7 +167,8 @@ void MapLaserPoint(
     int mapHoleX, int mapHoleY,      /* スキャンの延長された到達点 */
     int mapEndX, int mapEndY,        /* スキャンの到達点 */
     int cellValue,                   /* 占有状態を表す値 */
-    int alpha);                      /* 混合率 (0から255) */
+    int alpha,                       /* 混合率 (0から255) */
+    bool useModifiedCellModel);      /* 格子の値の更新方法 */
 
 /*
  * 地図の更新
@@ -188,7 +190,9 @@ RobotPosition2D MonteCarloPositionSearch(
     const RobotPosition2D* pStartPos,       /* 探索開始点の座標 */
     double sigmaXY,                         /* 並進移動の標準偏差 */
     double sigmaTheta,                      /* 回転移動の標準偏差 */
-    int maxIterNum);                        /* 最大の繰り返し数 */
+    int maxIterNum,                         /* 最大の繰り返し数 */
+    int maxFailIterNum,                     /* 最大の失敗数 */
+    int* pBestDist);                        /* スキャンと現在位置との最小の相違 */
 
 /*
  * センサデータからスキャンを生成
@@ -257,7 +261,8 @@ void IterativeMapBuilding(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
     SensorData* pSensorData,                /* センサデータ */
     SlamContext* pContext,                  /* SLAMの状態 */
-    bool isForward);                        /* 往路かどうか */
+    bool isForward,                         /* 往路かどうか */
+    bool useModifiedCellModel);             /* 格子の値の改善方法 */
 
 /*
  * ループ閉じ込みによるロボットの姿勢調整

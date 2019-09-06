@@ -22,10 +22,15 @@ double DistanceRobotPosition2D(const RobotPosition2D* pPos0,
 void InitializeGridMap(GridMap* pMap,
                        std::uint16_t initValue)
 {
-    /* 全ての格子をCELL_UNKNOWNで初期化 */
-    for (int i = 0; i < MAP_SIZE; ++i)
-        for (int j = 0; j < MAP_SIZE; ++j)
-            pMap->mCells[i * MAP_SIZE + j] = initValue;
+    /* 全ての格子をinitValueで初期化 */
+    std::fill(std::begin(pMap->mCells),
+              std::end(pMap->mCells),
+              initValue);
+
+    /* 全ての格子の更新回数を0で初期化 */
+    std::fill(std::begin(pMap->mNums),
+              std::end(pMap->mNums),
+              0);
 }
 
 /*
@@ -104,7 +109,8 @@ void MapLaserPoint(
     int mapHoleX, int mapHoleY,      /* スキャンの延長された到達点 */
     int mapEndX, int mapEndY,        /* スキャンの到達点 */
     int cellValue,                   /* 占有状態を表す値 */
-    int alpha)                       /* 混合率 (0から255) */
+    int alpha,                       /* 混合率 (0から255) */
+    bool useModifiedCellModel)       /* 格子の値の更新方法 */
 {
     /* スキャンに基づいて, 格子の値を更新 */
 
@@ -236,8 +242,10 @@ void MapLaserPoint(
         std::size_t cellIndex = (!isSteep) ? (cellY * MAP_SIZE + cellX) :
                                              (cellX * MAP_SIZE + cellY);
         std::uint16_t oldValue = pMap->mCells[cellIndex];
-        std::uint16_t newValue =
-            ((256 - alpha) * oldValue + alpha * currentValue) >> 8;
+        std::uint16_t newValue;
+
+        /* 格子の更新方法の改善版を使うかどうかによって, newValueの計算が変わる */
+        newValue = ((256 - alpha) * oldValue + alpha * currentValue) >> 8;
         pMap->mCells[cellIndex] = newValue;
 
         errY += 2 * clippedDeltaY;
@@ -315,10 +323,14 @@ void UpdateMap(
             std::floor(globalHoleY * CELLS_PER_METER + 0.5));
 
         /* スキャン点に障害物がないときは, 混合率を減らす */
+        /*
         if (pScan->mPoints[i].mValue == CELL_NO_OBSTACLE)
             quality = integrationQuality / 4;
         else
             quality = integrationQuality;
+        */
+
+        quality = integrationQuality;
 
         int cellValue = (pScan->mPoints[i].mValue == CELL_NO_OBSTACLE) ?
             CELL_NO_OBSTACLE : CELL_OBSTACLE;
@@ -327,7 +339,8 @@ void UpdateMap(
                       mapBeginX, mapBeginY,
                       mapHoleX, mapHoleY,
                       mapEndX, mapEndY,
-                      cellValue, quality);
+                      cellValue, quality,
+                      true);
     }
 }
 
@@ -342,6 +355,7 @@ RobotPosition2D MonteCarloPositionSearch(
     double sigmaXY,                         /* 並進移動の標準偏差 */
     double sigmaTheta,                      /* 回転移動の標準偏差 */
     int maxIterNum,                         /* 最大の繰り返し数 */
+    int maxFailIterNum,                     /* 最大の失敗数 */
     int* pBestDist)                         /* スキャンと現在位置との最小の相違 */
 {
     RobotPosition2D currentPos = *pStartPos;
@@ -354,6 +368,7 @@ RobotPosition2D MonteCarloPositionSearch(
     int lastBestDist = currentDist;
     
     int iterNum = 0;
+    int failNum = 0;
     
     /* ロボット位置の標準偏差 */
     std::normal_distribution<> normalDistXY(0.0, sigmaXY);
@@ -362,7 +377,10 @@ RobotPosition2D MonteCarloPositionSearch(
 
     using DistParamType = std::normal_distribution<>::param_type;
 
-    while (iterNum < maxIterNum) {
+    while (iterNum < maxIterNum && failNum < maxFailIterNum) {
+        /* モンテカルロ法の試行回数に制限を設ける */
+        ++iterNum;
+
         /* ロボット位置を乱数で適当に変更 */
         currentPos = lastBestPos;
         currentPos.mX += normalDistXY(randEngine);
@@ -378,11 +396,11 @@ RobotPosition2D MonteCarloPositionSearch(
             bestPos = currentPos;
             bestDist = currentDist;
         } else {
-            ++iterNum;
+            ++failNum;
         }
         
         /* ロボット位置が一定回数以上改善されなかった場合 */
-        if (iterNum > maxIterNum / 3) {
+        if (failNum > maxFailIterNum / 3) {
             /* 現在の標準偏差の下でロボット位置が改善されている場合 */
             if (bestDist < lastBestDist) {
                 /* 現在の標準偏差の下での最善なロボット位置を記録 */
@@ -390,7 +408,7 @@ RobotPosition2D MonteCarloPositionSearch(
                 lastBestDist = bestDist;
 
                 /* イテレーション回数をリセット */
-                iterNum = 0;
+                failNum = 0;
 
                 /* 標準偏差を小さくして再度モンテカルロ探索を実行 */
                 sigmaXY *= 0.5;
@@ -605,7 +623,8 @@ void IterativeMapBuilding(
     std::default_random_engine& randEngine, /* 擬似乱数生成器 */
     SensorData* pSensorData,                /* センサデータ */
     SlamContext* pContext,                  /* SLAMの状態 */
-    bool isForward)                         /* 往路かどうか */
+    bool isForward,                         /* 往路かどうか */
+    bool useModifiedCellModel)              /* 格子の値の改善方法 */
 {
     double robotVelocityXY;
     double robotVelocityAngle;
@@ -679,6 +698,7 @@ void IterativeMapBuilding(
                                          &sensorPos,
                                          pContext->mSigmaXY,
                                          pContext->mSigmaTheta,
+                                         10000,
                                          1000,
                                          nullptr);
 
@@ -707,12 +727,37 @@ void IterativeMapBuilding(
         (currentPos.mY - pContext->mLastRobotPos.mY));
     pContext->mAccumulatedTravelDist += travelDist;
 
+    /* モンテカルロ法によりロボットの位置が変わったかどうか */
+    RobotPosition2D deltaRobotPos;
+
+    deltaRobotPos.mX = currentPos.mX - pContext->mLastRobotPos.mX;
+    deltaRobotPos.mY = currentPos.mY - pContext->mLastRobotPos.mY;
+    deltaRobotPos.mTheta = currentPos.mTheta - pContext->mLastRobotPos.mTheta;
+
+    bool isPositionFixed = (deltaRobotPos.mX != 0.0) ||
+                           (deltaRobotPos.mY != 0.0) ||
+                           (deltaRobotPos.mTheta != 0.0);
+    
+    /* ロボットの位置が変化していれば, スキャンデータの信頼性が下がる */
+    int localizedScanQuality;
+    int rawScanQuality;
+    
+    if (useModifiedCellModel) {
+        localizedScanQuality = static_cast<int>(256.0 * 0.9);
+        rawScanQuality = static_cast<int>(256.0 * 0.6);
+    } else {
+        localizedScanQuality = static_cast<int>(256.0 * 0.2);
+        rawScanQuality = static_cast<int>(256.0 * 0.1);
+    }
+    
+    int integrationQuality = isPositionFixed ? localizedScanQuality : rawScanQuality;
+
     /* 地図の更新 */
     /* 更新されたロボット位置ではなく, センサ位置を用いることに注意 */
     UpdateMap(&currentScan,
               pContext->mpMap,
               &sensorPos,
-              50,
+              integrationQuality,
               pContext->mHoleWidth);
     
     /* ロボットの状態の更新 */
@@ -770,6 +815,7 @@ RobotPosition2D LoopClosurePosition(
                                          pStartPos,
                                          0.6,
                                          20.0,
+                                         1e7,
                                          1e5,
                                          pBestDistScanAndMap);
 
